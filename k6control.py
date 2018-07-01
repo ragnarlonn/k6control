@@ -1,19 +1,57 @@
 import sys
 import time
 import json
+import getopt
 import datetime
 import requests
 import curses
-import random
 from math import log10, pow
 
 k6_url = "http://localhost:6565"
+refresh_interval = 1
+vumod = 1
 
-def main(stdscr):
+def main():
+    global k6_url, refresh_interval, vumod
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "i:a:v:h", ["interval=","address=","vumod=","help"])
+    except getopt.GetoptError as err:
+        print str(err)
+        usage()
+        sys.exit(1)
+
+    for o, a in opts:
+        if o in ("-i", "--interval"):
+            try:
+                refresh_interval = int(a)
+            except:
+                usage()
+                sys.exit(1)
+        elif o in ("-a", "--address"):
+            k6_url = a
+        elif o in ("-v", "--vumod"):
+            try:
+                vumod = int(a)
+            except:
+                usage()
+                sys.exit(1)
+        else:
+            usage()
+            if not o in ("-h", "--help"):
+                sys.exit(1)
+            sys.exit(0)
+
+    # Execute the run() function via the curses wrapper
+    curses.wrapper(run)
+
+
+def run(stdscr):
+    global k6_url, refresh_interval, vumod
 
     # Create a Communicator object that can talk to the running k6 instance
     k6 = Communicator(k6_url)
-    
+
     # Init curses
     curses.start_color()
     curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
@@ -21,21 +59,17 @@ def main(stdscr):
     stdscr.nodelay(True)
     stdscr.clear()
 
-    dbgwindow = DbgWindow(stdscr)
-    dbgwindow.update("Starting...")
-
     # Fetch some initial data from k6
     k6.fetch_data()
     last_fetch = time.time()
     start_time = last_fetch
-    update_interval = 1
 
     # Init onscreen curses windows
-    vu_window = VUWindow(stdscr, dbgwindow)
+    vu_window = VUWindow(stdscr)
     vu_window.update(k6)
     status_window = StatusWindow(stdscr)
     status_window.update(k6)
-    metrics_window = MetricsWindow(stdscr, dbgwindow)
+    metrics_window = MetricsWindow(stdscr)
     metrics_window.update(k6)
 
     stdscr.refresh()
@@ -57,14 +91,14 @@ def main(stdscr):
         if c == ord('+'):
             # PATCH back last status msg, with "vus" increased
             payload = {"data":k6.status[-1][1]}
-            payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] + 1
+            payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] + vumod
             r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
             k6.fetch_status()
             update = True
         if c == ord('-'):
             # PATCH back last status msg, with "vus" decreased
             payload = {"data":k6.status[-1][1]}
-            payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] - 1
+            payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] - vumod
             r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
             k6.fetch_status()
             update = True
@@ -72,7 +106,6 @@ def main(stdscr):
         if c == curses.KEY_RESIZE:
             stdscr.erase()
             vu_window.resize()
-            dbgwindow.resize()
             status_window.resize()
             metrics_window.resize()
             update = True
@@ -83,7 +116,7 @@ def main(stdscr):
             metrics_window.update(k6)
             update = False
         # If it is time to fetch new data, do so and set update flag so window contents will be recreated
-        if time.time() > (last_fetch + update_interval):
+        if time.time() > (last_fetch + refresh_interval):
             k6.fetch_data()  # this can take a bit of time = fairly likely a terminal resize event happens
             last_fetch = time.time()            
             update = True      # don't update windows immediately, in case terminal has been resized
@@ -91,7 +124,7 @@ def main(stdscr):
         curses.doupdate()
 
 
-# This thing handles communication with the running k6 instance
+# This thing fetches data from the running k6 instance (and remembers old data it has fetched)
 class Communicator:
     def __init__(self, k6_address):
         self.k6_address = k6_address
@@ -112,20 +145,16 @@ class Communicator:
     def fetch_data(self):
         self.fetch_status()
         self.fetch_metrics()
-        #for metric in data:
-        #    if metric['type'] == "metrics" and metric['id'] == "vus":
-        #        self.vus.append((t, metric['attributes']['sample']['value']))
 
 
 # This is the window that displays the live VU level
 class VUWindow:
-    def __init__(self, stdscr, dbgwindow):
+    def __init__(self, stdscr):
         self.stdscr = stdscr
-        self.dbgwindow = dbgwindow
         self.resize()
     def resize(self):
         stdscr_height, stdscr_width = self.stdscr.getmaxyx()
-        self.height = int(stdscr_height - 5)
+        self.height = stdscr_height
         self.width = int(0.6 * stdscr_width)
         self.win = self.stdscr.subwin(self.height, self.width, 0, int(stdscr_width*0.4+0.5))
         self.win.bkgd(' ', curses.color_pair(1))
@@ -186,7 +215,7 @@ class StatusWindow:
         self.resize()
     def resize(self):
         stdscr_height, stdscr_width = self.stdscr.getmaxyx()
-        self.height = (stdscr_height - 5) / 2
+        self.height = stdscr_height / 2
         self.width = int(stdscr_width*0.4)
         self.win = self.stdscr.subwin(self.height, self.width, 0, 0)
         self.win.bkgd(' ', curses.color_pair(1))
@@ -206,23 +235,19 @@ class StatusWindow:
         self.win.addstr(8, 6, "vus: ")
         self.win.addstr(8, 11, str(status['vus']), curses.A_REVERSE)
         self.win.addstr(8, 16, "(+/- to change)")
-        #self.win.addstr(1, 16, "%s" % status['running'], curses.A_REVERSE)
-        #self.win.addstr(2, 2, "Test paused: ")
-        #self.win.addstr(2, 15, "%s (P to toggle)" % status['paused'], curses.A_REVERSE)
         self.win.noutrefresh()
 
 
 # This window displays general test information
 class MetricsWindow:
-    def __init__(self, stdscr, dbgwindow):
+    def __init__(self, stdscr):
         self.stdscr = stdscr
-        self.dbgwindow = dbgwindow
         self.resize()
     def resize(self):
         stdscr_height, stdscr_width = self.stdscr.getmaxyx()
-        self.height = (stdscr_height - 5) / 2
+        self.height = stdscr_height - (stdscr_height / 2)
         self.width = int(stdscr_width*0.4)
-        self.win = self.stdscr.subwin(self.height, self.width, self.height, 0)
+        self.win = self.stdscr.subwin(self.height, self.width, stdscr_height / 2, 0)
         self.win.bkgd(' ', curses.color_pair(1))
     def update(self, data):
         self.win.clear()
@@ -236,43 +261,33 @@ class MetricsWindow:
                 ( "http_reqs", "HTTP reqs/s:  ", 0)
             ]
             interval = data.metrics[-1][0] - data.metrics[-3][0]
-            out = "interval=%d " % interval.seconds
             for metric in data.metrics[-1][1]:
                 for i, t in enumerate(metrics):
                     if metric['id'] == t[0]:
                         metrics[i] = (metrics[i][0], metrics[i][1], metric['attributes']['sample']['count'])
-                        out += (" metric-1=%f" % metrics[i][2])
             for metric in data.metrics[-3][1]:
                 for i, t in enumerate(metrics):
                     if metric['id'] == t[0]:
                         delta = t[2] - metric['attributes']['sample']['count']
-                        out += (" metric-3=%f delta=%f" % (t[2], delta))
                         rate = str(delta / interval.seconds)
                         self.win.addstr(3+i, 2, t[1])
                         self.win.addstr(3+i, 2 + len(t[1]), rate, curses.A_REVERSE)
-            #self.dbgwindow.update(out)
-        #self.win.addstr(1, 16, "%s" % status['running'], curses.A_REVERSE)
-        #self.win.addstr(2, 2, "Test paused: ")
-        #self.win.addstr(2, 15, "%s (P to toggle)" % status['paused'], curses.A_REVERSE)
         self.win.noutrefresh()
 
 
-class DbgWindow:
-    def __init__(self, stdscr):
-        self.stdscr = stdscr
-        self.resize()
-    def resize(self):
-        stdscr_height, stdscr_width = self.stdscr.getmaxyx()
-        self.height = 5
-        self.width = int(stdscr_width)
-        self.win = self.stdscr.subwin(self.height, self.width, stdscr_height-5, 0)
-        self.win.bkgd(' ', curses.color_pair(1))
-    def update(self, text):
-        self.win.clear()
-        self.win.box()
-        self.win.addstr(1, 2, text)
-        self.win.noutrefresh()
-
+def usage():
+    print "Usage: k6control [options]"
+    print ""
+    print "Options:"
+    print " -a <k6_address>                Specify where the running k6 instance"
+    print "    --address=<k6_address>      is that we want to control"
+    print " -i <seconds>                   How often should k6control refresh data"
+    print "    --interval=<seconds>        and plot new points in the VU graph"
+    print " -v <vus>                       How many VUs to add or remove when using"
+    print "    --vumod=<vus>               the +/- controls to add or remove VUs"
+    print " -h                             Show this help text"
+    print "    --help"
+    print ""
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    main()
