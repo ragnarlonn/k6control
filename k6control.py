@@ -1,16 +1,20 @@
 import sys
 import time
+import json
 import datetime
 import requests
 import curses
 import random
 from math import log10, pow
 
+k6_url = "http://localhost:6565"
+
 def main(stdscr):
 
-    # Create a Data object to keep track of data queried from the running k6 instance
-    data = TheData('http://localhost:6565')
-        
+    # Create a Communicator object that can talk to the running k6 instance
+    k6 = Communicator(k6_url)
+    
+    # Init curses
     curses.start_color()
     curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
     curses.curs_set(0)
@@ -20,25 +24,48 @@ def main(stdscr):
     dbgwindow = DbgWindow(stdscr)
     dbgwindow.update("Starting...")
 
-    data.fetch_data()
+    # Fetch some initial data from k6
+    k6.fetch_data()
     last_fetch = time.time()
     start_time = last_fetch
     update_interval = 1
 
+    # Init onscreen curses windows
     vu_window = VUWindow(stdscr, dbgwindow)
-    vu_window.update(data)
-
+    vu_window.update(k6)
     status_window = StatusWindow(stdscr)
-    status_window.update(data)
+    status_window.update(k6)
 
     stdscr.refresh()
     update = False
 
+    # Main loop
     while True:
         c = stdscr.getch()
         if c == ord('q'):
             return
-        # First, check for a terminal resize event and recalculate window sizes if there was one
+        if c == ord('p') or c == ord('P'):
+            # PATCH back last status msg, with "paused" state inverted
+            payload = {"data":k6.status[-1][1]}
+            payload['data']['attributes']['paused'] = (not payload['data']['attributes']['paused'])
+            r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
+            k6.fetch_status()
+            update = True
+        if c == ord('+'):
+            # PATCH back last status msg, with "vus" increased
+            payload = {"data":k6.status[-1][1]}
+            payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] + 1
+            r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
+            k6.fetch_status()
+            update = True
+        if c == ord('-'):
+            # PATCH back last status msg, with "vus" decreased
+            payload = {"data":k6.status[-1][1]}
+            payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] - 1
+            r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
+            k6.fetch_status()
+            update = True
+        # Check for a terminal resize event and recalculate window sizes if there was one
         if c == curses.KEY_RESIZE:
             stdscr.erase()
             vu_window.resize()
@@ -47,32 +74,37 @@ def main(stdscr):
             update = True
         # If new data has been fetched or terminal has been resized, recreate window contents
         if update:
-            vu_window.update(data)
-            status_window.update(data)
+            vu_window.update(k6)
+            status_window.update(k6)
             update = False
         # If it is time to fetch new data, do so and set update flag so window contents will be recreated
         if time.time() > (last_fetch + update_interval):
-            data.fetch_data()  # this can take a bit of time = fairly likely a terminal resize event happens
+            k6.fetch_data()  # this can take a bit of time = fairly likely a terminal resize event happens
             last_fetch = time.time()            
             update = True      # don't update windows immediately, in case terminal has been resized
         # Tell curses to update display, if necessary
         curses.doupdate()
         
-class TheData:
+class Communicator:
     def __init__(self, k6_address):
         self.k6_address = k6_address
         self.status = []
         self.metrics = []
         self.vus = []
-    def fetch_data(self):
+    def fetch_status(self):
         t = datetime.datetime.now()
         r = requests.get(self.k6_address + "/v1/status")
         data = r.json()['data']
         self.status.append((t, data))
         self.vus.append((t, data['attributes']['vus']))
+    def fetch_metrics(self):
+        t = datetime.datetime.now()
         r = requests.get(self.k6_address + "/v1/metrics")
         data = r.json()['data']
         self.metrics.append((t, data))
+    def fetch_data(self):
+        self.fetch_status()
+        self.fetch_metrics()
         #for metric in data:
         #    if metric['type'] == "metrics" and metric['id'] == "vus":
         #        self.vus.append((t, metric['attributes']['sample']['value']))
@@ -112,25 +144,17 @@ class VUWindow:
             ymax = int(magnitude * int(maxval/magnitude) * 1.2)
         else:
             ymax = 1
-        ytick = float(ymax) / 3.0
+        ytick = float(ymax) / 2.0
         # Calculate an appropriate tick interval for the X (time) axis
         xtick = (points[-1][0] - points[0][0]) / 3
         # Plot X and Y axis ticks
-        out = ""
         self.win.addstr(1, 2, "VU")
         for i in range(3):
             ypos = 3 + self.chart_height - int( (float(self.chart_height)/2.0) * float(i) )
-            out += ("ypos=%d   i=%d   ytick=%f" % (ypos, i, ytick))
             s = str(int(i * ytick))
             self.win.addstr(ypos, 1 + 2-int(len(s)/2), s)
             self.win.addstr(ypos, 0, "-")
-            #t = points[0][0] + (i * xtick)
-            #xpos = 6 + int(float(self.chart_width)/5.0 * float(i))
-            #12 + int(float(self.chart_width)/5.0 * float(i))
-            #self.win.addstr(self.height-1, xpos, t.strftime("%H:%M:%S"))
-        self.dbgwindow.update(out)
         # Plot the values
-        #out = "maxh=%d,maxval=%d,ymax=%d" % (max_bar_height,maxval,ymax)
         for i in range(len(points)):
             bar_position = 7 + self.chart_width - len(points) + i
             t, val = points[i]
@@ -139,9 +163,10 @@ class VUWindow:
             if i==0 or i==self.chart_width-1 or i==int((self.chart_width-1)/2):
                 self.win.addstr(self.height-2, bar_position, "|")
                 self.win.addstr(self.height-1, bar_position - 3, t.strftime("%H:%M:%S"))
-            #out += (" val=%d,h=%d" % (val, bar_height))
-        #self.dbgwindow.update("Plotted %d points, max was %d (ymax=%d), yrange was %d" % (len(points), maxval, ymax, max_bar_height))
-        #self.dbgwindow.update(out)
+            if i==len(points)-1:
+                s = "%d VU" % val
+                self.win.addstr(1 + self.chart_height - bar_height, bar_position - int(len(s)/2), s, curses.A_REVERSE)
+                self.win.addstr(2 + self.chart_height - bar_height, bar_position, "|")
         self.win.noutrefresh()
 
 class StatusWindow:
