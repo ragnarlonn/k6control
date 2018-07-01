@@ -35,6 +35,8 @@ def main(stdscr):
     vu_window.update(k6)
     status_window = StatusWindow(stdscr)
     status_window.update(k6)
+    metrics_window = MetricsWindow(stdscr, dbgwindow)
+    metrics_window.update(k6)
 
     stdscr.refresh()
     update = False
@@ -42,7 +44,8 @@ def main(stdscr):
     # Main loop
     while True:
         c = stdscr.getch()
-        if c == ord('q'):
+        # 'Q' quits the program
+        if c == ord('q') or c == ord('Q'):
             return
         if c == ord('p') or c == ord('P'):
             # PATCH back last status msg, with "paused" state inverted
@@ -71,11 +74,13 @@ def main(stdscr):
             vu_window.resize()
             dbgwindow.resize()
             status_window.resize()
+            metrics_window.resize()
             update = True
         # If new data has been fetched or terminal has been resized, recreate window contents
         if update:
             vu_window.update(k6)
             status_window.update(k6)
+            metrics_window.update(k6)
             update = False
         # If it is time to fetch new data, do so and set update flag so window contents will be recreated
         if time.time() > (last_fetch + update_interval):
@@ -84,7 +89,9 @@ def main(stdscr):
             update = True      # don't update windows immediately, in case terminal has been resized
         # Tell curses to update display, if necessary
         curses.doupdate()
-        
+
+
+# This thing handles communication with the running k6 instance
 class Communicator:
     def __init__(self, k6_address):
         self.k6_address = k6_address
@@ -109,6 +116,8 @@ class Communicator:
         #    if metric['type'] == "metrics" and metric['id'] == "vus":
         #        self.vus.append((t, metric['attributes']['sample']['value']))
 
+
+# This is the window that displays the live VU level
 class VUWindow:
     def __init__(self, stdscr, dbgwindow):
         self.stdscr = stdscr
@@ -169,6 +178,8 @@ class VUWindow:
                 self.win.addstr(2 + self.chart_height - bar_height, bar_position, "|")
         self.win.noutrefresh()
 
+
+# This window displays general test information
 class StatusWindow:
     def __init__(self, stdscr):
         self.stdscr = stdscr
@@ -199,7 +210,52 @@ class StatusWindow:
         #self.win.addstr(2, 2, "Test paused: ")
         #self.win.addstr(2, 15, "%s (P to toggle)" % status['paused'], curses.A_REVERSE)
         self.win.noutrefresh()
-    
+
+
+# This window displays general test information
+class MetricsWindow:
+    def __init__(self, stdscr, dbgwindow):
+        self.stdscr = stdscr
+        self.dbgwindow = dbgwindow
+        self.resize()
+    def resize(self):
+        stdscr_height, stdscr_width = self.stdscr.getmaxyx()
+        self.height = (stdscr_height - 5) / 2
+        self.width = int(stdscr_width*0.4)
+        self.win = self.stdscr.subwin(self.height, self.width, self.height, 0)
+        self.win.bkgd(' ', curses.color_pair(1))
+    def update(self, data):
+        self.win.clear()
+        self.win.box()
+        self.win.addstr(1, (self.width-19)/2-1, "Performance metrics")
+        if len(data.metrics) > 2:
+            metrics = [
+                ( "iterations", "Iterations/s: ", 0),
+                ( "data_received", "Bytes/s IN:   ", 0),
+                ( "data_sent", "Bytes/s OUT:  ", 0),
+                ( "http_reqs", "HTTP reqs/s:  ", 0)
+            ]
+            interval = data.metrics[-1][0] - data.metrics[-3][0]
+            out = "interval=%d " % interval.seconds
+            for metric in data.metrics[-1][1]:
+                for i, t in enumerate(metrics):
+                    if metric['id'] == t[0]:
+                        metrics[i] = (metrics[i][0], metrics[i][1], metric['attributes']['sample']['count'])
+                        out += (" metric-1=%f" % metrics[i][2])
+            for metric in data.metrics[-3][1]:
+                for i, t in enumerate(metrics):
+                    if metric['id'] == t[0]:
+                        delta = t[2] - metric['attributes']['sample']['count']
+                        out += (" metric-3=%f delta=%f" % (t[2], delta))
+                        rate = str(delta / interval.seconds)
+                        self.win.addstr(3+i, 2, t[1])
+                        self.win.addstr(3+i, 2 + len(t[1]), rate, curses.A_REVERSE)
+            #self.dbgwindow.update(out)
+        #self.win.addstr(1, 16, "%s" % status['running'], curses.A_REVERSE)
+        #self.win.addstr(2, 2, "Test paused: ")
+        #self.win.addstr(2, 15, "%s (P to toggle)" % status['paused'], curses.A_REVERSE)
+        self.win.noutrefresh()
+
 
 class DbgWindow:
     def __init__(self, stdscr):
@@ -216,8 +272,7 @@ class DbgWindow:
         self.win.box()
         self.win.addstr(1, 2, text)
         self.win.noutrefresh()
-    
-    
+
 
 if __name__ == "__main__":
     curses.wrapper(main)
