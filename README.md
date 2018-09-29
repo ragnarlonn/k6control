@@ -27,3 +27,12 @@ Options:
  -h                             Show this help text
     --help
 ```
+
+## k6control keys
+
+- `q` Quits the program
+- `+` Increases the VU level
+- `-` Decereases the VU level
+- `p` Pauses/unpauses the test
+
+
