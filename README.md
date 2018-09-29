@@ -5,7 +5,7 @@ A command-and-control UI for k6
 
 ## Usage
 
-Start k6control and connect to a locall
+Starting k6 and then connecting to it using k6control:
 ```
 $ k6 run --quiet --linger script.js >/dev/null &
 $ python k6control.py -a localhost:6565
