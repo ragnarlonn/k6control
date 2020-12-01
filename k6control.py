@@ -11,13 +11,16 @@ k6_url = "http://localhost:6565"
 refresh_interval = 1
 vumod = 1
 
+
+# noinspection PyMissingTypeHints,PyBroadException
 def main():
     global k6_url, refresh_interval, vumod
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "i:a:v:h", ["interval=","address=","vumod=","help"])
+        opts, args = getopt.getopt(sys.argv[1:], "i:a:v:h",
+                                   ["interval=", "address=", "vumod=", "help"])
     except getopt.GetoptError as err:
-        print str(err)
+        print(str(err))
         usage()
         sys.exit(1)
 
@@ -25,7 +28,7 @@ def main():
         if o in ("-i", "--interval"):
             try:
                 refresh_interval = int(a)
-            except:
+            except Exception:
                 usage()
                 sys.exit(1)
         elif o in ("-a", "--address"):
@@ -33,12 +36,12 @@ def main():
         elif o in ("-v", "--vumod"):
             try:
                 vumod = int(a)
-            except:
+            except Exception:
                 usage()
                 sys.exit(1)
         else:
             usage()
-            if not o in ("-h", "--help"):
+            if o not in ("-h", "--help"):
                 sys.exit(1)
             sys.exit(0)
 
@@ -46,6 +49,7 @@ def main():
     curses.wrapper(run)
 
 
+# noinspection PyMissingTypeHints,PyUnusedLocal
 def run(stdscr):
     global k6_url, refresh_interval, vumod
 
@@ -83,21 +87,21 @@ def run(stdscr):
             return
         if c == ord('p') or c == ord('P'):
             # PATCH back last status msg, with "paused" state inverted
-            payload = {"data":k6.status[-1][1]}
+            payload = {"data": k6.status[-1][1]}
             payload['data']['attributes']['paused'] = (not payload['data']['attributes']['paused'])
             r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
             k6.fetch_status()
             update = True
         if c == ord('+'):
             # PATCH back last status msg, with "vus" increased
-            payload = {"data":k6.status[-1][1]}
+            payload = {"data": k6.status[-1][1]}
             payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] + vumod
             r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
             k6.fetch_status()
             update = True
         if c == ord('-'):
             # PATCH back last status msg, with "vus" decreased
-            payload = {"data":k6.status[-1][1]}
+            payload = {"data": k6.status[-1][1]}
             payload['data']['attributes']['vus'] = payload['data']['attributes']['vus'] - vumod
             r = requests.patch(k6_url + "/v1/status", data=json.dumps(payload))
             k6.fetch_status()
@@ -115,51 +119,60 @@ def run(stdscr):
             status_window.update(k6)
             metrics_window.update(k6)
             update = False
-        # If it is time to fetch new data, do so and set update flag so window contents will be recreated
+        # If it is time to fetch new data, do so and set update flag so window contents
+        # will be recreated
         if time.time() > (last_fetch + refresh_interval):
-            k6.fetch_data()  # this can take a bit of time = fairly likely a terminal resize event happens
-            last_fetch = time.time()            
-            update = True      # don't update windows immediately, in case terminal has been resized
+            k6.fetch_data()
+            # this can take a bit of time = fairly likely a terminal resize event happens
+            last_fetch = time.time()
+            update = True  # don't update windows immediately, in case terminal has been resized
         # Tell curses to update display, if necessary
         curses.doupdate()
 
 
 # This thing fetches data from the running k6 instance (and remembers old data it has fetched)
+# noinspection PyMissingTypeHints
 class Communicator:
     def __init__(self, k6_address):
         self.k6_address = k6_address
         self.status = []
         self.metrics = []
         self.vus = []
+
     def fetch_status(self):
         t = datetime.datetime.now()
         r = requests.get(self.k6_address + "/v1/status")
         data = r.json()['data']
         self.status.append((t, data))
         self.vus.append((t, data['attributes']['vus']))
+
     def fetch_metrics(self):
         t = datetime.datetime.now()
         r = requests.get(self.k6_address + "/v1/metrics")
         data = r.json()['data']
         self.metrics.append((t, data))
+
     def fetch_data(self):
         self.fetch_status()
         self.fetch_metrics()
 
 
 # This is the window that displays the live VU level
+# noinspection PyMissingTypeHints,PyAttributeOutsideInit,PyUnusedLocal
 class VUWindow:
     def __init__(self, stdscr):
         self.stdscr = stdscr
         self.resize()
+
     def resize(self):
         stdscr_height, stdscr_width = self.stdscr.getmaxyx()
         self.height = stdscr_height
         self.width = int(0.6 * stdscr_width)
-        self.win = self.stdscr.subwin(self.height, self.width, 0, int(stdscr_width*0.4+0.5))
+        self.win = self.stdscr.subwin(self.height, self.width, 0, int(stdscr_width * 0.4 + 0.5))
         self.win.bkgd(' ', curses.color_pair(1))
         self.chart_width = self.width - 12
         self.chart_height = self.height - 7
+
     def update(self, data):
         self.win.clear()
         self.win.box()
@@ -179,7 +192,7 @@ class VUWindow:
         # Calculate an appropriate range and tick interval for the Y axis
         if maxval > 0:
             magnitude = int(pow(10, log10(maxval)))
-            ymax = int(magnitude * int(maxval/magnitude) * 1.2)
+            ymax = int(magnitude * int(maxval / magnitude) * 1.2)
         else:
             ymax = 1
         ytick = float(ymax) / 2.0
@@ -188,42 +201,46 @@ class VUWindow:
         # Plot X and Y axis ticks
         self.win.addstr(1, 2, "VU")
         for i in range(3):
-            ypos = 3 + self.chart_height - int( (float(self.chart_height)/2.0) * float(i) )
+            ypos = 3 + self.chart_height - int((float(self.chart_height) / 2.0) * float(i))
             s = str(int(i * ytick))
-            self.win.addstr(ypos, 1 + 2-int(len(s)/2), s)
+            self.win.addstr(ypos, 1 + 2 - int(len(s) / 2), s)
             self.win.addstr(ypos, 0, "-")
         # Plot the values
         for i in range(len(points)):
             bar_position = 7 + self.chart_width - len(points) + i
             t, val = points[i]
-            bar_height = int(float(self.chart_height) * (float(val)/float(ymax)))
+            bar_height = int(float(self.chart_height) * (float(val) / float(ymax)))
             self.win.vline(4 + self.chart_height - bar_height, bar_position, '#', bar_height)
-            if i==0 or i==self.chart_width-1 or i==int((self.chart_width-1)/2):
-                self.win.addstr(self.height-2, bar_position, "|")
-                self.win.addstr(self.height-1, bar_position - 3, t.strftime("%H:%M:%S"))
-            if i==len(points)-1:
+            if i == 0 or i == self.chart_width - 1 or i == int((self.chart_width - 1) / 2):
+                self.win.addstr(self.height - 2, bar_position, "|")
+                self.win.addstr(self.height - 1, bar_position - 3, t.strftime("%H:%M:%S"))
+            if i == len(points) - 1:
                 s = "%d VU" % val
-                self.win.addstr(1 + self.chart_height - bar_height, bar_position - int(len(s)/2), s, curses.A_REVERSE)
+                self.win.addstr(1 + self.chart_height - bar_height, bar_position - int(len(s) / 2),
+                                s, curses.A_REVERSE)
                 self.win.addstr(2 + self.chart_height - bar_height, bar_position, "|")
         self.win.noutrefresh()
 
 
 # This window displays general test information
+# noinspection PyAttributeOutsideInit,PyMissingTypeHints
 class StatusWindow:
     def __init__(self, stdscr):
         self.stdscr = stdscr
         self.resize()
+
     def resize(self):
         stdscr_height, stdscr_width = self.stdscr.getmaxyx()
-        self.height = stdscr_height / 2
-        self.width = int(stdscr_width*0.4)
+        self.height = int(stdscr_height / 2)
+        self.width = int(stdscr_width * 0.4)
         self.win = self.stdscr.subwin(self.height, self.width, 0, 0)
         self.win.bkgd(' ', curses.color_pair(1))
+
     def update(self, data):
         self.win.clear()
         self.win.box()
         status = data.status[-1][1]['attributes']
-        self.win.addstr(1, (self.width-14)/2-1, "k6 test status")
+        self.win.addstr(1, int((self.width - 14) / 2 - 1), "k6 test status")
         self.win.addstr(3, 2, "Running: ")
         self.win.addstr(3, 11, str(status['running']), curses.A_REVERSE)
         self.win.addstr(4, 2, " Paused: ")
@@ -239,55 +256,62 @@ class StatusWindow:
 
 
 # This window displays general test information
+# noinspection PyMissingTypeHints,PyAttributeOutsideInit
 class MetricsWindow:
     def __init__(self, stdscr):
         self.stdscr = stdscr
         self.resize()
+
     def resize(self):
         stdscr_height, stdscr_width = self.stdscr.getmaxyx()
-        self.height = stdscr_height - (stdscr_height / 2)
-        self.width = int(stdscr_width*0.4)
-        self.win = self.stdscr.subwin(self.height, self.width, stdscr_height / 2, 0)
+        self.height = int(stdscr_height - (stdscr_height / 2))
+        self.width = int(stdscr_width * 0.4)
+        self.win = self.stdscr.subwin(self.height, self.width, int(stdscr_height / 2), 0)
         self.win.bkgd(' ', curses.color_pair(1))
+
     def update(self, data):
         self.win.clear()
         self.win.box()
-        self.win.addstr(1, (self.width-19)/2-1, "Performance metrics")
+        self.win.addstr(1, int((self.width - 19) / 2 - 1), "Performance metrics")
         if len(data.metrics) > 2:
             metrics = [
-                ( "iterations", "Iterations/s: ", 0),
-                ( "data_received", "Bytes/s IN:   ", 0),
-                ( "data_sent", "Bytes/s OUT:  ", 0),
-                ( "http_reqs", "HTTP reqs/s:  ", 0)
+                ("iterations", "Iterations/s: ", 0),
+                ("data_received", "Bytes/s IN:   ", 0),
+                ("data_sent", "Bytes/s OUT:  ", 0),
+                ("http_reqs", "HTTP reqs/s:  ", 0)
             ]
             interval = data.metrics[-1][0] - data.metrics[-3][0]
             for metric in data.metrics[-1][1]:
                 for i, t in enumerate(metrics):
                     if metric['id'] == t[0]:
-                        metrics[i] = (metrics[i][0], metrics[i][1], metric['attributes']['sample']['count'])
+                        metrics[i] = (
+                            metrics[i][0], metrics[i][1], metric['attributes']['sample']['count']
+                        )
             for metric in data.metrics[-3][1]:
                 for i, t in enumerate(metrics):
                     if metric['id'] == t[0]:
                         delta = t[2] - metric['attributes']['sample']['count']
                         rate = str(delta / interval.seconds)
-                        self.win.addstr(3+i, 2, t[1])
-                        self.win.addstr(3+i, 2 + len(t[1]), rate, curses.A_REVERSE)
+                        self.win.addstr(3 + i, 2, t[1])
+                        self.win.addstr(3 + i, 2 + len(t[1]), rate, curses.A_REVERSE)
         self.win.noutrefresh()
 
 
+# noinspection PyMissingTypeHints
 def usage():
-    print "Usage: k6control [options]"
-    print ""
-    print "Options:"
-    print " -a <k6_address>                Specify where the running k6 instance"
-    print "    --address=<k6_address>      is that we want to control"
-    print " -i <seconds>                   How often should k6control refresh data"
-    print "    --interval=<seconds>        and plot new points in the VU graph"
-    print " -v <vus>                       How many VUs to add or remove when using"
-    print "    --vumod=<vus>               the +/- controls to add or remove VUs"
-    print " -h                             Show this help text"
-    print "    --help"
-    print ""
+    print("Usage: k6control [options]")
+    print("")
+    print("Options:")
+    print(" -a <k6_address>                Specify where the running k6 instance")
+    print("    --address=<k6_address>      is that we want to control")
+    print(" -i <seconds>                   How often should k6control refresh data")
+    print("    --interval=<seconds>        and plot new points in the VU graph")
+    print(" -v <vus>                       How many VUs to add or remove when using")
+    print("    --vumod=<vus>               the +/- controls to add or remove VUs")
+    print(" -h                             Show this help text")
+    print("    --help")
+    print("")
+
 
 if __name__ == "__main__":
     main()
